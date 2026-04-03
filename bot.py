@@ -12,7 +12,7 @@ from telegram import Update
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandlear,
+    MessageHandler,
     filters,
     ContextTypes,
 )
@@ -61,24 +61,42 @@ def get_sheet():
 
 def add_expense_to_sheet(date: str, description: str, amount: float):
     sheet = get_sheet()
-    sheet.append_row([date, description, round(amount, 2)])
+    sheet.append_row([date, description, round(amount, 2)], value_input_option="RAW")
 
 
 def get_expenses_for_range(start_date, end_date):
     """Return rows whose Date falls in [start_date, end_date] (datetime.date objects)."""
     sheet = get_sheet()
-    rows = sheet.get_all_records()
+    rows = sheet.get_all_values()
     result = []
-    for row in rows:
-        raw = str(row.get("Date", "")).strip()
+    # Skip header row (row 0)
+    for row in rows[1:]:
+        if len(row) < 3:
+            continue
+        raw = str(row[0]).strip()
         if not raw:
             continue
-        try:
-            row_date = datetime.strptime(raw, "%Y-%m-%d").date()
-        except ValueError:
+        row_date = None
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%Y/%m/%d"):
+            try:
+                row_date = datetime.strptime(raw, fmt).date()
+                break
+            except ValueError:
+                continue
+        if not row_date:
             continue
         if start_date <= row_date <= end_date:
-            result.append(row)
+            # Normalize amount: replace comma with dot
+            amount_str = str(row[2]).strip().replace(",", ".")
+            try:
+                amount = float(amount_str)
+            except ValueError:
+                amount = 0.0
+            result.append({
+                "Date":        raw,
+                "Description": str(row[1]).strip(),
+                "Amount":      amount,
+            })
     return result
 
 
@@ -230,8 +248,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ── Weekly report ──────────────────────────────────────────────────────────────
 async def _send_weekly_report(bot):
     today      = datetime.now().date()
-    week_start = today - timedelta(days=today.weekday())  # this Monday
-    week_end   = today                                     # today
+    week_end   = today
+    week_start = today - timedelta(days=7)
 
     expenses = get_expenses_for_range(week_start, week_end)
 
